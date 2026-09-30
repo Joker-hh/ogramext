@@ -42,7 +42,7 @@ const EyeIcon = ({ show }: { show: boolean }) => (
 const SettingsIcon = () => (
   <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round">
     <circle cx="12" cy="12" r="3" />
-    <path d="M19.4 15a1.65 1.65 0 0 0 .33 1.82l.06.06a2 2 0 0 1-2.83 2.83l-.06-.06a1.65 1.65 0 0 0-1.82-.33 1.65 1.65 0 0 0-1 1.51V21a2 2 0 0 1-4 0v-.09A1.65 1.65 0 0 0 9 19.4a1.65 1.65 0 0 0-1.82.33l-.06.06a2 2 0 0 1-2.83-2.83l.06-.06A1.65 1.65 0 0 0 4.68 15a1.65 1.65 0 0 0-1.51-1H3a2 2 0 0 1 0-4h.09A1.65 1.65 0 0 0 4.6 9a1.65 1.65 0 0 0-.33-1.82l-.06-.06a2 2 0 0 1 2.83-2.83l.06.06A1.65 1.65 0 0 0 9 4.68a1.65 1.65 0 0 0 1-1.51V3a2 2 0 0 1 4 0v.09a1.65 1.65 0 0 0 1 1.51 1.65 1.65 0 0 0 1.82-.33l.06-.06a2 2 0 0 1 2.83 2.83l-.06.06A1.65 1.65 0 0 0 19.4 9a1.65 1.65 0 0 0 1.51 1H21a2 2 0 0 1 0 4h-.09a1.65 1.65 0 0 0-1.51 1z" />
+    <path d="M19.4 15a1.65 1.65 0 0 0 .33 1.82l.06.06a2 2 0 0 1-2.83 2.83l-.06-.06a1.65 1.65 0 0 0-1.82-.33 1.65 1.65 0 0 0-1 1.51V21a2 2 0 0 1-4 0v-.09A1.65 1.65 0 0 0 9 19.4a1.65 1.65 0 0 0-1.82.33l-.06.06a2 2 0 0 1-2.83-2.83l.06-.06A1.65 1.65 0 0 0 4.68 15a1.65 1.65 0 0 0-1.51-1H3a2 2 0 0 1 0-4h.09A1.65 1.65 0 0 0 4.6 9a1.65 1.65 0 0 0-.33-1.82l-.06-.06a2 2 0 0 1 2.83-2.830l.06.06A1.65 1.65 0 0 0 9 4.68a1.65 1.65 0 0 0 1-1.51V3a2 2 0 0 1 4 0v.09a1.65 1.65 0 0 0 1 1.51 1.65 1.65 0 0 0 1.82-.33l.06-.06a2 2 0 0 1 2.83 2.83l-.06.06A1.65 1.65 0 0 0 19.4 9a1.65 1.65 0 0 0 1.51 1H21a2 2 0 0 1 0 4h-.09a1.65 1.65 0 0 0-1.51 1z" />
   </svg>
 );
 const ChevronIcon = () => (
@@ -357,6 +357,9 @@ const Popup = () => {
   const lastOllamaModel = useRef<string | null>(null);
   const switchTimer = useRef<number | null>(null);
   const advancedRef = useRef<HTMLDivElement>(null);
+  // Only the latest GET_MODELS request may update state; an older one that
+  // returns late would show the previous provider's or URL's models.
+  const modelsRequest = useRef(0);
 
   useEffect(() => { loadSettings(); loadProviders(); loadIssueStats(); }, []);
   useEffect(() => {
@@ -365,6 +368,7 @@ const Popup = () => {
       (settings.provider !== 'ollama' && !settings.apiKey) ||
       (settings.provider === 'custom' && !settings.customBaseUrl)
     ) {
+      modelsRequest.current++;
       setModels([]);
       setHiddenOllamaModels([]);
       return;
@@ -452,6 +456,7 @@ const Popup = () => {
   const loadProviders = async () => { try { const r = await chrome.runtime.sendMessage({ type: 'GET_PROVIDERS' }); if (r.providers) setProviders(r.providers); } catch {} };
 
   const loadModels = async () => {
+    const request = ++modelsRequest.current;
     setFetching(true);
     const baseUrl =
       settings.provider === 'custom'
@@ -461,6 +466,7 @@ const Popup = () => {
           : undefined;
     try {
       const r = await chrome.runtime.sendMessage({ type: 'GET_MODELS', provider: settings.provider, apiKey: settings.apiKey, baseUrl });
+      if (request !== modelsRequest.current) return;
       const models: string[] = r?.models || [];
       const displayModels =
         settings.provider === 'ollama' ? visibleOllamaWritingModels(models) : models;
@@ -472,7 +478,12 @@ const Popup = () => {
         const rec = pickRecommendedOllamaWritingModel(models);
         if (rec && !displayModels.includes(settings.model)) saveSettings({ model: rec });
       }
-    } catch {} finally { setFetching(false); }
+      // Custom has no static fallback, so pick the first listed model rather
+      // than leave the model empty (the background would send gpt-4o-mini).
+      if (settings.provider === 'custom' && displayModels.length && !displayModels.includes(settings.model)) {
+        saveSettings({ model: displayModels[0] });
+      }
+    } catch {} finally { if (request === modelsRequest.current) setFetching(false); }
   };
 
   const checkOllama = async (probe: boolean) => {
