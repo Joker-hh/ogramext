@@ -365,6 +365,8 @@ const Popup = () => {
       (settings.provider !== 'ollama' && !settings.apiKey) ||
       (settings.provider === 'custom' && !settings.customBaseUrl)
     ) {
+      setModels([]);
+      setHiddenOllamaModels([]);
       return;
     }
 
